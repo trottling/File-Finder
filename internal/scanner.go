@@ -1,4 +1,4 @@
-package scanner
+package internal
 
 import (
 	"context"
