@@ -1,0 +1,9 @@
+This is a password for the system.
+User email: user123@example.com
+This is a SECRET document.
+Nothing important here.
+ERROR 404
+ERROR 500
+Some random text.
+user999@example.com
+12345
