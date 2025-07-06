@@ -3,15 +3,34 @@ package main
 import (
 	"FileFinder/internal"
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 )
+
+func InitLogger(logfile string) {
+	logrus.SetFormatter(&logrus.TextFormatter{
+		ForceColors:   true,
+		FullTimestamp: true,
+		DisableQuote:  true,
+		PadLevelText:  true,
+	})
+	if logfile != "" {
+		file, err := os.OpenFile(logfile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err == nil {
+			logrus.SetOutput(file)
+		} else {
+			logrus.Warn("Failed to open log file, logging to stdout")
+		}
+	}
+}
 
 func main() {
 	app := &cli.App{
@@ -25,7 +44,7 @@ func main() {
 			},
 			&cli.StringSliceFlag{
 				Name:  "whitelist",
-				Usage: "Whitelist of file extensions (comma separated)",
+				Usage: "Whitelist of file extensions (comma separated, e.g. txt,log)",
 			},
 			&cli.StringSliceFlag{
 				Name:  "blacklist",
@@ -42,7 +61,12 @@ func main() {
 			},
 			&cli.BoolFlag{
 				Name:  "save-full",
-				Usage: "Save the entire file with a match, not just the matching lines",
+				Usage: "Save the entire file with a match, not just the matching lines (use --save-full-folder to specify folder)",
+			},
+			&cli.StringFlag{
+				Name:  "save-full-folder",
+				Usage: "Folder to save found files (default: /foudn_files)",
+				Value: "/foudn_files",
 			},
 			&cli.BoolFlag{
 				Name:  "archives",
@@ -57,9 +81,14 @@ func main() {
 				Name:  "timeout",
 				Usage: "Timeout for the scan (e.g. 10m, 1h)",
 			},
+			&cli.BoolFlag{
+				Name:  "fail-fast",
+				Usage: "Stop on first error (fail-fast mode)",
+			},
 		},
 		Action: func(c *cli.Context) error {
 			start := time.Now()
+			InitLogger(c.String("logfile"))
 			logrus.Info("FileFinder started")
 
 			// Setup context with cancel and signal handling
@@ -95,51 +124,58 @@ func main() {
 				}
 			}
 
+			// Bring extensions to unified format (.ext)
+			whitelist := normalizeExtSlice(c.StringSlice("whitelist"))
+			blacklist := normalizeExtSlice(c.StringSlice("blacklist"))
+
 			opts := internal.ScanOptions{
-				Roots:       validRoots,
-				Whitelist:   c.StringSlice("whitelist"),
-				Blacklist:   c.StringSlice("blacklist"),
-				Depth:       c.Int("depth"),
-				Archives:    c.Bool("archives"),
-				PatternFile: c.String("pattern-file"),
-				Threads:     c.Int("threads"),
-				SaveFull:    c.Bool("save-full"),
+				Roots:          validRoots,
+				Whitelist:      whitelist,
+				Blacklist:      blacklist,
+				Depth:          c.Int("depth"),
+				Archives:       c.Bool("archives"),
+				PatternFile:    c.String("pattern-file"),
+				Threads:        c.Int("threads"),
+				SaveFull:       c.Bool("save-full"),
+				SaveFullFolder: c.String("save-full-folder"),
+				FailFast:       c.Bool("fail-fast"),
 			}
 
 			finder := internal.NewFileScanner()
+			var (
+				matchCount int64
+				errorCount int64
+				fileCount  int64
+			)
 			err := finder.Scan(sigCtx, opts, func(res internal.MatchResult) {
 				if res.Error != nil {
+					errorCount++
 					logrus.WithFields(logrus.Fields{"file": res.FilePath, "err": res.Error}).Error("Error while processing file")
+					if opts.FailFast {
+						cancel()
+					}
 					return
 				}
 				if res.Matched {
+					matchCount++
 					logrus.WithFields(logrus.Fields{"file": res.FilePath, "line": res.LineNumber}).Info("Match found")
+				}
+				if res.FilePath != "" && !res.Matched {
+					fileCount++
 				}
 			})
 			if err != nil {
 				logrus.WithError(err).Fatal("Scan failed")
 			}
 
-			logrus.Infof("FileFinder finished in %s", time.Since(start))
+			// Total info
+			fmt.Printf("\n======= Scan finished in %s =======\n", time.Since(start))
+			fmt.Printf("Total files scanned: %d\n", fileCount)
+			fmt.Printf("Total matches found: %d\n", matchCount)
+			fmt.Printf("Errors: %d\n", errorCount)
+
 			return nil
 		},
-	}
-
-	// Logger setup
-	logrus.SetFormatter(&logrus.TextFormatter{
-		ForceColors:   true,
-		FullTimestamp: true,
-		DisableQuote:  true,
-		PadLevelText:  true,
-	})
-
-	if logfile := os.Getenv("LOGFILE"); logfile != "" {
-		file, err := os.OpenFile(logfile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err == nil {
-			logrus.SetOutput(file)
-		} else {
-			logrus.Warn("Failed to open log file, logging to stdout")
-		}
 	}
 
 	if err := app.Run(os.Args); err != nil {
@@ -147,10 +183,27 @@ func main() {
 	}
 }
 
+// normalizeExtSlice strip spaces/dots, add dot in start
+func normalizeExtSlice(s []string) []string {
+	out := make([]string, 0, len(s))
+	for _, ext := range s {
+		for _, val := range strings.Split(ext, ",") {
+			val = strings.TrimSpace(val)
+			if val == "" {
+				continue
+			}
+			val = strings.TrimPrefix(val, ".")
+			val = "." + strings.ToLower(val)
+			out = append(out, val)
+		}
+	}
+	return out
+}
+
+// detectRoots detect all roots depending from OS
 func detectRoots() []string {
 	osType := runtime.GOOS
 	if osType == "windows" {
-		// On Windows, scan all available drives
 		var drives []string
 		for c := 'C'; c <= 'Z'; c++ {
 			path := string(c) + ":\\"
