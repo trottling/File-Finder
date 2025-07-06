@@ -370,14 +370,27 @@ func matchFileWithStats(path string, patterns []Pattern, saveFull bool, saveFull
 func matchReader(reader io.Reader, patterns []Pattern, saveFull bool, onMatch func(MatchResult), filePath, innerPath string, matchCount, errorCount *int64, saveFullFolder string) {
 	var fullContent []byte
 	bufReader := bufio.NewReader(reader)
+	shouldCopy := saveFull && saveFullFolder != ""
+	var copySrc io.Reader
 	if saveFull {
-		if data, err := io.ReadAll(bufReader); err == nil {
-			fullContent = data
-			bufReader = bufio.NewReader(strings.NewReader(string(data)))
+		if shouldCopy {
+			pr, pw := io.Pipe()
+			tee := io.TeeReader(bufReader, pw)
+			copySrc = pr
+			go func() {
+				defer pw.Close()
+				io.Copy(io.Discard, tee)
+			}()
+			bufReader = bufio.NewReader(pr)
 		} else {
-			atomic.AddInt64(errorCount, 1)
-			onMatch(MatchResult{FilePath: filePath, InnerPath: innerPath, Error: err})
-			return
+			if data, err := io.ReadAll(bufReader); err == nil {
+				fullContent = data
+				bufReader = bufio.NewReader(strings.NewReader(string(data)))
+			} else {
+				atomic.AddInt64(errorCount, 1)
+				onMatch(MatchResult{FilePath: filePath, InnerPath: innerPath, Error: err})
+				return
+			}
 		}
 	}
 	lineNum := 0
@@ -404,7 +417,7 @@ func matchReader(reader io.Reader, patterns []Pattern, saveFull bool, onMatch fu
 					FullFile:  fullContent,
 					Matched:   true,
 				})
-				if saveFullFolder != "" {
+				if shouldCopy {
 					folder := saveFullFolder
 					if folder == "" {
 						folder = "/found_files"
@@ -416,7 +429,11 @@ func matchReader(reader io.Reader, patterns []Pattern, saveFull bool, onMatch fu
 					} else {
 						outPath = filepath.Join(folder, strings.ReplaceAll(filePath, string(os.PathSeparator), "_"))
 					}
-					os.WriteFile(outPath, fullContent, 0644)
+					out, err := os.Create(outPath)
+					if err == nil {
+						io.Copy(out, copySrc)
+						out.Close()
+					}
 				}
 				break
 			} else {
