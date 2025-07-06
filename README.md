@@ -62,6 +62,3 @@ go run ./cmd/finder.go --pattern-file patterns.txt --whitelist .go,.txt ./myproj
 
 ## Requirements
 - Go 1.20+
-
-## License
-MIT
