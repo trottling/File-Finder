@@ -1,1 +1,20 @@
-234
+# Регулярные выражения (Go-style, с префиксом re:)
+re:password[0-9]+
+re:\b(secret|token|key)\b
+re:user(name)?\s*=\s*\w+
+
+# Простой подстрочный поиск (чувствителен к регистру)
+plain:MySuperSecret
+plain:admin
+plain:123456
+
+# Подстрочный поиск без учёта регистра (plain:i:)
+plain:i:sessionid
+plain:i:apikey
+plain:i:authorization
+
+# Можно использовать и кириллицу!
+plain:пароль
+plain:i:доступ
+
+# Пустые строки и строки с # игнорируются
