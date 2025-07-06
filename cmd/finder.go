@@ -1,6 +1,7 @@
 package main
 
 import (
+	"FileFinder/internal"
 	"context"
 	"os"
 	"os/signal"
@@ -10,8 +11,6 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
-
-	fileFinder "FileFinder/internal/scanner"
 )
 
 func main() {
@@ -96,7 +95,7 @@ func main() {
 				}
 			}
 
-			opts := fileFinder.ScanOptions{
+			opts := internal.ScanOptions{
 				Roots:       validRoots,
 				Whitelist:   c.StringSlice("whitelist"),
 				Blacklist:   c.StringSlice("blacklist"),
@@ -107,8 +106,8 @@ func main() {
 				SaveFull:    c.Bool("save-full"),
 			}
 
-			finder := fileFinder.NewFileScanner()
-			err := finder.Scan(sigCtx, opts, func(res fileFinder.MatchResult) {
+			finder := internal.NewFileScanner()
+			err := finder.Scan(sigCtx, opts, func(res internal.MatchResult) {
 				if res.Error != nil {
 					logrus.WithFields(logrus.Fields{"file": res.FilePath, "err": res.Error}).Error("Error while processing file")
 					return
