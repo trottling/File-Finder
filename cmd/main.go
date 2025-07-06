@@ -15,6 +15,7 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
+// InitLogger initializes the logger with optional file output.
 func InitLogger(logfile string) {
 	logrus.SetFormatter(&logrus.TextFormatter{
 		ForceColors:   true,
@@ -65,8 +66,8 @@ func main() {
 			},
 			&cli.StringFlag{
 				Name:  "save-full-folder",
-				Usage: "Folder to save found files (default: /foudn_files)",
-				Value: "/foudn_files",
+				Usage: "Folder to save found files (default: /found_files)",
+				Value: "/found_files",
 			},
 			&cli.BoolFlag{
 				Name:  "archives",
@@ -183,7 +184,7 @@ func main() {
 	}
 }
 
-// normalizeExtSlice strip spaces/dots, add dot in start
+// normalizeExtSlice normalizes file extension slices to ".ext" format.
 func normalizeExtSlice(s []string) []string {
 	out := make([]string, 0, len(s))
 	for _, ext := range s {
@@ -200,7 +201,7 @@ func normalizeExtSlice(s []string) []string {
 	return out
 }
 
-// detectRoots detect all roots depending from OS
+// detectRoots detects all root directories depending on the OS.
 func detectRoots() []string {
 	osType := runtime.GOOS
 	if osType == "windows" {

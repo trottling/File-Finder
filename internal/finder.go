@@ -83,7 +83,7 @@ func (p *PlainPattern) Match(s string) bool {
 	return strings.Contains(s, p.s)
 }
 
-// Load patterns from file, support re:... and plain, plain:i for case-insensitive
+// loadPatterns loads patterns from file, supports regex and plain patterns.
 func loadPatterns(path string) ([]Pattern, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -117,6 +117,7 @@ func loadPatterns(path string) ([]Pattern, error) {
 	return patterns, nil
 }
 
+// containsExt checks if the extension is in the list.
 func containsExt(list []string, ext string) bool {
 	for _, e := range list {
 		if e == ext {
@@ -126,6 +127,7 @@ func containsExt(list []string, ext string) bool {
 	return false
 }
 
+// isArchive checks if the file is an archive by extension.
 func isArchive(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	archiveExts := map[string]bool{
@@ -139,6 +141,7 @@ func isArchive(path string) bool {
 	return archiveExts[ext]
 }
 
+// walkWithDepth walks the directory tree up to maxDepth.
 func walkWithDepth(ctx context.Context, root string, maxDepth int, fileFunc func(path string, info os.FileInfo, err error) error) error {
 	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if ctx.Err() != nil {
@@ -154,6 +157,7 @@ func walkWithDepth(ctx context.Context, root string, maxDepth int, fileFunc func
 	})
 }
 
+// Scan scans files and archives for patterns.
 func (fs *FileScanner) Scan(ctx context.Context, opts ScanOptions, onMatch func(MatchResult)) error {
 	patterns, err := loadPatterns(opts.PatternFile)
 	if err != nil {
@@ -268,6 +272,7 @@ loop:
 	return nil
 }
 
+// handleArchive processes archive files and sends tasks for inner files.
 func (fs *FileScanner) handleArchive(ctx context.Context, path string, sendTask func(t Task), foundFiles *int64, opts ScanOptions) {
 	fsys, err := archiver.FileSystem(ctx, path, nil)
 	if err != nil {
@@ -307,6 +312,7 @@ func (fs *FileScanner) handleArchive(ctx context.Context, path string, sendTask 
 	})
 }
 
+// handleArchiveFile scans a file inside an archive for patterns.
 func (fs *FileScanner) handleArchiveFile(archivePath, innerPath string, patterns []Pattern, saveFull bool, saveFullFolder string, onMatch func(MatchResult), matchCount, errorCount *int64) {
 	fsys, err := archiver.FileSystem(context.Background(), archivePath, nil)
 	if err != nil {
@@ -329,6 +335,7 @@ func (fs *FileScanner) handleArchiveFile(archivePath, innerPath string, patterns
 	matchReader(f, patterns, saveFull, onMatch, archivePath, innerPath, matchCount, errorCount, saveFullFolder)
 }
 
+// matchFileWithStats scans a regular file for patterns and collects stats.
 func matchFileWithStats(path string, patterns []Pattern, saveFull bool, saveFullFolder string, onMatch func(MatchResult), matchCount, errorCount *int64) {
 	if isArchive(path) {
 		return
@@ -344,6 +351,7 @@ func matchFileWithStats(path string, patterns []Pattern, saveFull bool, saveFull
 	matchReader(f, patterns, saveFull, onMatch, path, "", matchCount, errorCount, saveFullFolder)
 }
 
+// matchReader reads lines from a file and matches them against patterns.
 func matchReader(reader io.Reader, patterns []Pattern, saveFull bool, onMatch func(MatchResult), filePath, innerPath string, matchCount, errorCount *int64, saveFullFolder string) {
 	var fullContent []byte
 	bufReader := bufio.NewReader(reader)
