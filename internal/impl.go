@@ -5,19 +5,16 @@ import (
 	"context"
 	"fmt"
 	"io"
+	iofs "io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
-
-	iofs "io/fs"
 
 	"github.com/mholt/archiver/v4"
 	"github.com/panjf2000/ants/v2"
-	"github.com/schollz/progressbar/v3"
 	"github.com/sirupsen/logrus"
 )
 
@@ -43,22 +40,14 @@ func (fs *FileScanner) Scan(ctx context.Context, opts ScanOptions, onMatch func(
 		errorCount     int64
 	)
 
-	bar := progressbar.NewOptions64(1,
-		progressbar.OptionSetDescription("Scanning..."),
-		progressbar.OptionShowDescriptionAtLineEnd(),
-		progressbar.OptionFullWidth(),
-		progressbar.OptionShowIts(),
-		progressbar.OptionClearOnFinish(),
-	)
-
-	fileCh := make(chan task, 100)
+	fileCh := make(chan Task, 100)
 	var wg sync.WaitGroup
 	pool, err := ants.NewPoolWithFunc(opts.Threads, func(i interface{}) {
 		defer wg.Done()
 		if ctx.Err() != nil {
 			return
 		}
-		t := i.(task)
+		t := i.(Task)
 		atomic.AddInt64(&processedFiles, 1)
 
 		if t.isArchive {
@@ -66,8 +55,8 @@ func (fs *FileScanner) Scan(ctx context.Context, opts ScanOptions, onMatch func(
 		} else {
 			matchFileWithStats(t.path, patterns, opts.SaveFull, onMatch, &matchCount, &errorCount)
 		}
-		bar.Add(1)
 	})
+
 	if err != nil {
 		return fmt.Errorf("failed to create worker pool: %w", err)
 	}
@@ -102,53 +91,23 @@ func (fs *FileScanner) Scan(ctx context.Context, opts ScanOptions, onMatch func(
 				}
 
 				if opts.Archives && isArchive(path) {
-					fs.handleArchive(ctx, path, func(t task) {
+					fs.handleArchive(ctx, path, func(t Task) {
 						select {
 						case fileCh <- t:
 						case <-ctx.Done():
 						}
-					}, &foundFiles, bar, opts)
+					}, &foundFiles, opts)
 					return nil
 				}
 
 				atomic.AddInt64(&foundFiles, 1)
-				bar.ChangeMax64(atomic.LoadInt64(&foundFiles))
 				select {
-				case fileCh <- task{path: path}:
+				case fileCh <- Task{path: path}:
 				case <-ctx.Done():
 					return ctx.Err()
 				}
 				return nil
 			})
-		}
-	}()
-
-	progressDone := make(chan struct{})
-	go func() {
-		defer close(progressDone)
-		ticker := time.NewTicker(200 * time.Millisecond)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-walkDone:
-				return
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				processed := atomic.LoadInt64(&processedFiles)
-				found := atomic.LoadInt64(&foundFiles)
-				matches := atomic.LoadInt64(&matchCount)
-				errors := atomic.LoadInt64(&errorCount)
-
-				bar.Describe(fmt.Sprintf("Processed: %d | Found: %d | Matches: %d | Errors: %d", processed, found, matches, errors))
-
-				if processed > found {
-					found = processed
-				}
-
-				bar.ChangeMax64(found)
-			}
 		}
 	}()
 
@@ -162,7 +121,7 @@ loop:
 			wg.Add(1)
 			if err := pool.Invoke(t); err != nil {
 				wg.Done()
-				logrus.WithError(err).Error("Failed to submit task to pool")
+				logrus.WithError(err).Error("Failed to submit Task to pool")
 			}
 		case <-ctx.Done():
 			break loop
@@ -171,8 +130,6 @@ loop:
 
 	wg.Wait()
 	<-walkDone
-	<-progressDone
-	bar.Finish()
 
 	return nil
 }
@@ -313,7 +270,7 @@ func matchFileWithStats(path string, patterns []Pattern, saveFull bool, onMatch 
 	matchReader(f, patterns, saveFull, onMatch, path, "", matchCount, errorCount)
 }
 
-func (fs *FileScanner) handleArchive(ctx context.Context, path string, sendTask func(t task), foundFiles *int64, bar *progressbar.ProgressBar, opts ScanOptions) {
+func (fs *FileScanner) handleArchive(ctx context.Context, path string, sendTask func(t Task), foundFiles *int64, opts ScanOptions) {
 	fsys, err := archiver.FileSystem(ctx, path, nil)
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"archive": path, "error": err}).Error("Failed to open archive")
@@ -342,8 +299,7 @@ func (fs *FileScanner) handleArchive(ctx context.Context, path string, sendTask 
 		}
 
 		atomic.AddInt64(foundFiles, 1)
-		bar.ChangeMax64(atomic.LoadInt64(foundFiles))
-		sendTask(task{path: path, innerPath: innerPath, isArchive: true})
+		sendTask(Task{path: path, innerPath: innerPath, isArchive: true})
 		return nil
 	})
 }

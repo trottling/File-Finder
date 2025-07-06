@@ -27,7 +27,7 @@ type MatchResult struct {
 	Error      error
 }
 
-type task struct {
+type Task struct {
 	path      string
 	innerPath string
 	isArchive bool
