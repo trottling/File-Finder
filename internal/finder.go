@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/mholt/archiver/v4"
 	"github.com/panjf2000/ants/v2"
@@ -246,6 +247,20 @@ func (fs *FileScanner) Scan(ctx context.Context, opts ScanOptions, onMatch func(
 		}
 	}()
 
+	// Periodic stats logging
+	statDone := make(chan struct{})
+	go func() {
+		defer close(statDone)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(2 * time.Second):
+				logrus.Infof("Stats: found=%d, processed=%d, matches=%d, errors=%d", atomic.LoadInt64(&foundFiles), atomic.LoadInt64(&processedFiles), atomic.LoadInt64(&matchCount), atomic.LoadInt64(&errorCount))
+			}
+		}
+	}()
+
 loop:
 	for {
 		select {
@@ -268,6 +283,8 @@ loop:
 
 	wg.Wait()
 	<-walkDone
+	// Wait for stat logger to finish
+	<-statDone
 
 	return nil
 }
