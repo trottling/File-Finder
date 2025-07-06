@@ -90,7 +90,11 @@ func loadPatterns(path string) ([]Pattern, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			logrus.WithFields(logrus.Fields{"file": path, "err": err}).Warn("Failed to close pattern file")
+		}
+	}()
 
 	var patterns []Pattern
 	scanner := bufio.NewScanner(f)
@@ -296,7 +300,9 @@ func (fs *FileScanner) handleArchive(ctx context.Context, path string, sendTask 
 	}
 	defer func() {
 		if closer, ok := fsys.(io.Closer); ok {
-			closer.Close()
+			if err := closer.Close(); err != nil {
+				logrus.WithFields(logrus.Fields{"archive": path, "err": err}).Warn("Failed to close archive fsys")
+			}
 		}
 	}()
 
@@ -337,7 +343,9 @@ func (fs *FileScanner) handleArchiveFile(archivePath, innerPath string, patterns
 	}
 	defer func() {
 		if closer, ok := fsys.(io.Closer); ok {
-			closer.Close()
+			if err := closer.Close(); err != nil {
+				logrus.WithFields(logrus.Fields{"file": innerPath, "err": err}).Warn("Failed to close archive inner file")
+			}
 		}
 	}()
 	f, err := fsys.Open(innerPath)
@@ -346,7 +354,11 @@ func (fs *FileScanner) handleArchiveFile(archivePath, innerPath string, patterns
 		onMatch(MatchResult{FilePath: archivePath, InnerPath: innerPath, Error: err})
 		return
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			logrus.WithFields(logrus.Fields{"file": innerPath, "err": err}).Warn("Failed to close archive inner file")
+		}
+	}()
 	matchReader(f, patterns, saveFull, onMatch, archivePath, innerPath, matchCount, errorCount, saveFullFolder)
 }
 
@@ -362,7 +374,11 @@ func matchFileWithStats(path string, patterns []Pattern, saveFull bool, saveFull
 		logrus.WithFields(logrus.Fields{"file": path, "err": err}).Error("Error opening file")
 		return
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			logrus.WithFields(logrus.Fields{"file": path, "err": err}).Warn("Failed to close file after scan")
+		}
+	}()
 	matchReader(f, patterns, saveFull, onMatch, path, "", matchCount, errorCount, saveFullFolder)
 }
 
@@ -379,7 +395,9 @@ func matchReader(reader io.Reader, patterns []Pattern, saveFull bool, onMatch fu
 			copySrc = pr
 			go func() {
 				defer pw.Close()
-				io.Copy(io.Discard, tee)
+				if _, err := io.Copy(io.Discard, tee); err != nil {
+					logrus.WithFields(logrus.Fields{"file": filePath, "err": err}).Warn("Failed to discard tee copy")
+				}
 			}()
 			bufReader = bufio.NewReader(pr)
 		} else {
@@ -389,6 +407,7 @@ func matchReader(reader io.Reader, patterns []Pattern, saveFull bool, onMatch fu
 			} else {
 				atomic.AddInt64(errorCount, 1)
 				onMatch(MatchResult{FilePath: filePath, InnerPath: innerPath, Error: err})
+				logrus.WithFields(logrus.Fields{"file": filePath, "err": err}).Error("Failed to read file content for saveFull")
 				return
 			}
 		}
@@ -422,7 +441,10 @@ func matchReader(reader io.Reader, patterns []Pattern, saveFull bool, onMatch fu
 					if folder == "" {
 						folder = "/found_files"
 					}
-					os.MkdirAll(folder, 0755)
+					if err := os.MkdirAll(folder, 0755); err != nil {
+						logrus.WithFields(logrus.Fields{"folder": folder, "err": err}).Error("Failed to create folder for saving file")
+						break
+					}
 					var outPath string
 					if innerPath != "" {
 						outPath = filepath.Join(folder, strings.ReplaceAll(filePath, string(os.PathSeparator), "_"), strings.ReplaceAll(innerPath, string(os.PathSeparator), "_"))
@@ -430,9 +452,15 @@ func matchReader(reader io.Reader, patterns []Pattern, saveFull bool, onMatch fu
 						outPath = filepath.Join(folder, strings.ReplaceAll(filePath, string(os.PathSeparator), "_"))
 					}
 					out, err := os.Create(outPath)
-					if err == nil {
-						io.Copy(out, copySrc)
-						out.Close()
+					if err != nil {
+						logrus.WithFields(logrus.Fields{"file": outPath, "err": err}).Error("Failed to create file for saving match")
+						break
+					}
+					if _, err := io.Copy(out, copySrc); err != nil {
+						logrus.WithFields(logrus.Fields{"file": outPath, "err": err}).Error("Failed to copy file content to saved file")
+					}
+					if err := out.Close(); err != nil {
+						logrus.WithFields(logrus.Fields{"file": outPath, "err": err}).Warn("Failed to close saved file")
 					}
 				}
 				break
