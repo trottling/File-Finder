@@ -160,6 +160,22 @@ func detectRoots() []string {
 		}
 		return drives
 	}
-	// On Unix-like, scan from root
-	return []string{"/"}
+
+	// On Linux/macOS: search root is /
+	roots := []string{"/"}
+	// Check default mount points
+	folders := []string{"/mnt", "/media", "/run/media", "/Volumes"} // Last — for macOS
+
+	for _, mount := range folders {
+		if info, err := os.Stat(mount); err == nil && info.IsDir() {
+			entries, err := os.ReadDir(mount)
+			if err == nil {
+				for _, entry := range entries {
+					// Add all found folder
+					roots = append(roots, mount+"/"+entry.Name())
+				}
+			}
+		}
+	}
+	return roots
 }
