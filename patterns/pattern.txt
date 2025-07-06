@@ -18,3 +18,53 @@ plain:пароль
 plain:i:доступ
 
 # Пустые строки и строки с # игнорируются
+
+# Криптовалютные кошельки
+
+# Bitcoin
+re:\b([13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{39,59})\b
+
+# Ethereum
+re:\b0x[a-fA-F0-9]{40}\b
+
+# Solana адрес
+re:\b[1-9A-HJ-NP-Za-km-z]{32,44}\b
+
+# Tron
+re:\bT[a-zA-HJ-NP-Z0-9]{33}\b
+
+# TON (
+re:\b(EQ|UQ)[A-Za-z0-9_-]{46}\b
+
+# Dogecoin
+re:\bD{1}[5-9A-HJ-NP-Ua-km-z]{32}\b
+
+# Litecoin
+re:\b([LM3][a-km-zA-HJ-NP-Z1-9]{26,33}|ltc1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{39,59})\b
+
+# Monero
+re:\b[48][0-9AB][1-9A-HJ-NP-Za-km-z]{93}\b
+
+
+plain:i:bitcoin
+plain:i:btc
+plain:i:ethereum
+plain:i:eth
+plain:i:tron
+plain:i:trx
+plain:i:solana
+plain:i:sol
+plain:i:ton
+plain:i:doge
+plain:i:ltc
+plain:i:xmr
+plain:i:cardano
+plain:i:ada
+plain:i:private key
+plain:i:mnemonic
+plain:i:seed phrase
+plain:i:кошелек
+plain:i:криптокошелек
+plain:i:кошелёк
+plain:i:секретный ключ
+plain:i:фраза восстановления
