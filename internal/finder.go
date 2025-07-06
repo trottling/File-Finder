@@ -15,7 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mholt/archiver/v4"
+	"github.com/mholt/archives"
 	"github.com/panjf2000/ants/v2"
 	"github.com/sirupsen/logrus"
 )
@@ -132,13 +132,11 @@ func containsExt(list []string, ext string) bool {
 func isArchive(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	archiveExts := map[string]bool{
-		".zip": true,
-		".tar": true,
-		".gz":  true,
-		".bz2": true,
-		".xz":  true,
-		".rar": true,
-	}
+		".zip": true, ".tar": true, ".gz": true,
+		".bz2": true, ".xz": true, ".rar": true,
+		".br": true, ".lz4": true, ".lz": true,
+		".mz": true, ".sz": true, ".s2": true,
+		".zz": true, ".zst": true, ".7z": true}
 	return archiveExts[ext]
 }
 
@@ -291,7 +289,7 @@ loop:
 
 // handleArchive processes archive files and sends tasks for inner files.
 func (fs *FileScanner) handleArchive(ctx context.Context, path string, sendTask func(t Task), foundFiles *int64, opts ScanOptions) {
-	fsys, err := archiver.FileSystem(ctx, path, nil)
+	fsys, err := archives.FileSystem(ctx, path, nil)
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"archive": path, "error": err}).Error("Failed to open archive")
 		return
@@ -331,7 +329,7 @@ func (fs *FileScanner) handleArchive(ctx context.Context, path string, sendTask 
 
 // handleArchiveFile scans a file inside an archive for patterns.
 func (fs *FileScanner) handleArchiveFile(archivePath, innerPath string, patterns []Pattern, saveFull bool, saveFullFolder string, onMatch func(MatchResult), matchCount, errorCount *int64) {
-	fsys, err := archiver.FileSystem(context.Background(), archivePath, nil)
+	fsys, err := archives.FileSystem(context.Background(), archivePath, nil)
 	if err != nil {
 		atomic.AddInt64(errorCount, 1)
 		onMatch(MatchResult{FilePath: archivePath, InnerPath: innerPath, Error: err})
@@ -409,7 +407,7 @@ func matchReader(reader io.Reader, patterns []Pattern, saveFull bool, onMatch fu
 				if saveFullFolder != "" {
 					folder := saveFullFolder
 					if folder == "" {
-						folder = "/foudn_files"
+						folder = "/found_files"
 					}
 					os.MkdirAll(folder, 0755)
 					var outPath string
