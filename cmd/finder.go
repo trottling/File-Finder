@@ -11,7 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 
-	scannerpkg "FileFinder/internal/scanner"
+	fileFinder "FileFinder/internal/scanner"
 )
 
 func main() {
@@ -96,19 +96,19 @@ func main() {
 				}
 			}
 
-			opts := scannerpkg.ScanOptions{
-				Roots:     validRoots,
-				Whitelist: c.StringSlice("whitelist"),
-				Blacklist: c.StringSlice("blacklist"),
-				//Depth:       c.Int("depth"),
+			opts := fileFinder.ScanOptions{
+				Roots:       validRoots,
+				Whitelist:   c.StringSlice("whitelist"),
+				Blacklist:   c.StringSlice("blacklist"),
+				Depth:       c.Int("depth"),
 				Archives:    c.Bool("archives"),
 				PatternFile: c.String("pattern-file"),
 				Threads:     c.Int("threads"),
 				SaveFull:    c.Bool("save-full"),
 			}
 
-			scanner := scannerpkg.NewFileScanner()
-			err := scanner.Scan(sigCtx, opts, func(res scannerpkg.MatchResult) {
+			finder := fileFinder.NewFileScanner()
+			err := finder.Scan(sigCtx, opts, func(res fileFinder.MatchResult) {
 				if res.Error != nil {
 					logrus.WithFields(logrus.Fields{"file": res.FilePath, "err": res.Error}).Error("Error while processing file")
 					return

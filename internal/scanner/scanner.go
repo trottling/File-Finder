@@ -11,6 +11,7 @@ type ScanOptions struct {
 	Threads     int
 	Whitelist   []string
 	Blacklist   []string
+	Depth       int
 	Archives    bool
 	SaveFull    bool
 }

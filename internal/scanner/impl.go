@@ -360,8 +360,12 @@ func containsExt(list []string, ext string) bool {
 func isArchive(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	archiveExts := map[string]bool{
-		".zip": true, ".tar": true, ".gz": true,
-		".bz2": true, ".xz": true, ".rar": true,
+		".zip": true,
+		".tar": true,
+		".gz":  true,
+		".bz2": true,
+		".xz":  true,
+		".rar": true,
 	}
 	return archiveExts[ext]
 }
