@@ -273,6 +273,11 @@ loop:
 			if !ok {
 				break loop
 			}
+
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+
 			wg.Add(1)
 			if err := pool.Invoke(t); err != nil {
 				wg.Done()
@@ -282,7 +287,7 @@ loop:
 				}
 			}
 		case <-ctx.Done():
-			break loop
+			return ctx.Err() // Instant return if context is cancelled
 		}
 	}
 
@@ -314,17 +319,21 @@ func (fs *FileScanner) handleArchive(ctx context.Context, path string, sendTask 
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+
 		if err != nil || d.IsDir() {
 			return nil
 		}
+
 		if count > maxArchiveFiles {
-			logrus.Warnf("Archive %s skipped: too many files", path)
+			logrus.Warnf("Archive %s skipped: too many files (%d+)", path, maxArchiveFiles)
 			return errors.New("archive file limit reached")
 		}
+
 		ext := strings.ToLower(filepath.Ext(innerPath))
 		if len(opts.Whitelist) > 0 && !containsExt(opts.Whitelist, ext) {
 			return nil
 		}
+
 		if len(opts.Blacklist) > 0 && containsExt(opts.Blacklist, ext) {
 			return nil
 		}
