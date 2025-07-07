@@ -1,3 +1,5 @@
+## 🇷🇺  [Русская версия](./README.md)
+
 # FileFinder
 
 A powerful cross-platform CLI utility for searching files and archives with support for complex patterns, whitelist/blacklist
