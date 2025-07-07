@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -86,6 +87,14 @@ func main() {
 				Name:  "fail-fast",
 				Usage: "Stop on first error (fail-fast mode)",
 			},
+			&cli.StringFlag{
+				Name:  "save-matches-file",
+				Usage: "Path to the file where all found lines will be saved (one file)",
+			},
+			&cli.StringFlag{
+				Name:  "save-matches-folder",
+				Usage: "A folder where a separate file with the lines found for each pattern will be created",
+			},
 		},
 		Action: func(c *cli.Context) error {
 			start := time.Now()
@@ -130,23 +139,27 @@ func main() {
 			blacklist := normalizeExtSlice(c.StringSlice("blacklist"))
 
 			opts := internal.ScanOptions{
-				Roots:          validRoots,
-				Whitelist:      whitelist,
-				Blacklist:      blacklist,
-				Depth:          c.Int("depth"),
-				Archives:       c.Bool("archives"),
-				PatternFile:    c.String("pattern-file"),
-				Threads:        c.Int("threads"),
-				SaveFull:       c.Bool("save-full"),
-				SaveFullFolder: c.String("save-full-folder"),
-				FailFast:       c.Bool("fail-fast"),
+				Roots:                      validRoots,
+				Whitelist:                  whitelist,
+				Blacklist:                  blacklist,
+				Depth:                      c.Int("depth"),
+				Archives:                   c.Bool("archives"),
+				PatternFile:                c.String("pattern-file"),
+				Threads:                    c.Int("threads"),
+				SaveFull:                   c.Bool("save-full"),
+				SaveFullFolder:             c.String("save-full-folder"),
+				FailFast:                   c.Bool("fail-fast"),
+				SaveMatchesFile:            c.String("save-matches-file"),
+				SaveMatchesByPatternFolder: c.String("save-matches-folder"),
 			}
 
 			finder := internal.NewFileScanner()
 			var (
-				matchCount int64
-				errorCount int64
-				fileCount  int64
+				matchCount     int64
+				errorCount     int64
+				fileCount      int64
+				matchesFileMu  sync.Mutex
+				patternFilesMu sync.Map
 			)
 			err := finder.Scan(sigCtx, opts, func(res internal.MatchResult) {
 				if res.Error != nil {
@@ -160,6 +173,39 @@ func main() {
 				if res.Matched {
 					matchCount++
 					logrus.WithFields(logrus.Fields{"file": res.FilePath, "line": res.LineNumber}).Info("Match found")
+					// Save the found line to a common file if specified
+					if opts.SaveMatchesFile != "" && res.Line != "" {
+						matchesFileMu.Lock()
+						f, err := os.OpenFile(opts.SaveMatchesFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+						if err == nil {
+							f.WriteString(res.Line)
+							f.Close()
+						}
+						matchesFileMu.Unlock()
+					}
+					// We save the found line according to the pattern, if specified
+					if opts.SaveMatchesByPatternFolder != "" && res.Line != "" && res.Pattern != "" {
+						// The file name is a safe representation of the pattern.
+						patFileName := strings.ReplaceAll(res.Pattern, string(os.PathSeparator), "_")
+						patFileName = strings.ReplaceAll(patFileName, ":", "_")
+						patFileName = strings.ReplaceAll(patFileName, "*", "_")
+						patFileName = strings.ReplaceAll(patFileName, "?", "_")
+						patFileName = strings.ReplaceAll(patFileName, "\"", "_")
+						patFileName = strings.ReplaceAll(patFileName, "<", "_")
+						patFileName = strings.ReplaceAll(patFileName, ">", "_")
+						patFileName = strings.ReplaceAll(patFileName, "|", "_")
+						patFilePath := opts.SaveMatchesByPatternFolder + string(os.PathSeparator) + patFileName + ".txt"
+						// mutex for each file
+						muAny, _ := patternFilesMu.LoadOrStore(patFilePath, &sync.Mutex{})
+						mu := muAny.(*sync.Mutex)
+						mu.Lock()
+						f, err := os.OpenFile(patFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+						if err == nil {
+							f.WriteString(res.Line)
+							f.Close()
+						}
+						mu.Unlock()
+					}
 				}
 				if res.FilePath != "" && !res.Matched {
 					fileCount++

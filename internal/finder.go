@@ -34,16 +34,18 @@ func NewFileScanner() *FileScanner {
 
 // ScanOptions contains options for the scanning process.
 type ScanOptions struct {
-	Roots          []string
-	PatternFile    string
-	Threads        int
-	Whitelist      []string
-	Blacklist      []string
-	Depth          int
-	Archives       bool
-	SaveFull       bool
-	SaveFullFolder string
-	FailFast       bool
+	Roots                      []string
+	PatternFile                string
+	Threads                    int
+	Whitelist                  []string
+	Blacklist                  []string
+	Depth                      int
+	Archives                   bool
+	SaveFull                   bool
+	SaveFullFolder             string
+	FailFast                   bool
+	SaveMatchesFile            string
+	SaveMatchesByPatternFolder string
 }
 
 // MatchResult represents a single match found during scanning.
@@ -55,6 +57,7 @@ type MatchResult struct {
 	FullFile   []byte
 	Matched    bool
 	Error      error
+	Pattern    string
 }
 
 type Task struct {
@@ -421,9 +424,18 @@ func matchReader(reader io.Reader, patterns []Pattern, saveFull bool, onMatch fu
 			return
 		}
 		matched := false
+		var matchedPattern string
 		for _, p := range patterns {
 			if p.Match(line) {
 				matched = true
+				switch pt := p.(type) {
+				case *RegexPattern:
+					matchedPattern = pt.re.String()
+				case *PlainPattern:
+					matchedPattern = pt.s
+				default:
+					matchedPattern = "unknown"
+				}
 				break
 			}
 		}
@@ -435,6 +447,7 @@ func matchReader(reader io.Reader, patterns []Pattern, saveFull bool, onMatch fu
 					InnerPath: innerPath,
 					FullFile:  fullContent,
 					Matched:   true,
+					Pattern:   matchedPattern,
 				})
 				if shouldCopy {
 					folder := saveFullFolder
@@ -471,6 +484,7 @@ func matchReader(reader io.Reader, patterns []Pattern, saveFull bool, onMatch fu
 					LineNumber: lineNum,
 					Line:       line,
 					Matched:    true,
+					Pattern:    matchedPattern,
 				})
 			}
 		}
