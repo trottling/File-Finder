@@ -4,7 +4,7 @@ re:\b([13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{39,5
 # Ethereum
 re:\b0x[a-fA-F0-9]{40}\b
 
-# Solana адрес
+# Solana
 re:\b[1-9A-HJ-NP-Za-km-z]{32,44}\b
 
 # Tron
