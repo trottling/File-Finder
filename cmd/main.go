@@ -8,143 +8,142 @@ import (
 	"os/signal"
 	"runtime"
 	"strings"
-	"sync"
 	"syscall"
-	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 )
 
-// InitLogger initializes the logger with optional file output.
-func InitLogger(logfile string) {
-	logrus.SetFormatter(&logrus.TextFormatter{
-		ForceColors:   true,
-		FullTimestamp: true,
-		DisableQuote:  true,
-		PadLevelText:  true,
-	})
-	if logfile != "" {
-		file, err := os.OpenFile(logfile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err == nil {
-			logrus.SetOutput(file)
-		} else {
-			logrus.Warn("Failed to open log file, logging to stdout")
-		}
-	}
-}
-
 func main() {
 	app := &cli.App{
 		Name:  "FileFinder",
-		Usage: "Search for matches in files across all disks",
+		Usage: "Search patterns in files and archives across disks",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:     "pattern-file",
-				Usage:    "Path to the file with search patterns (required)",
+				Usage:    "Path to text file with patterns: plain lines, 'plain:i:' for case-insensitive, or 're:<regex>'",
 				Required: true,
 			},
 			&cli.StringSliceFlag{
 				Name:  "whitelist",
-				Usage: "Whitelist of file extensions (comma separated, e.g. txt,log)",
+				Usage: "Only scan these extensions (comma separated, e.g. txt,log,json). Use without dot.",
 			},
 			&cli.StringSliceFlag{
 				Name:  "blacklist",
-				Usage: "Blacklist of file extensions (comma separated)",
+				Usage: "Skip these extensions (comma separated). If whitelist is set, blacklist is ignored.",
 			},
 			&cli.StringFlag{
 				Name:  "logfile",
-				Usage: "Path to the log file",
+				Usage: "Write logs into file instead of stdout",
 			},
 			&cli.IntFlag{
 				Name:  "threads",
-				Usage: "Number of threads",
-				Value: 100,
+				Usage: "Max concurrent file workers (default scales with CPU)",
+				Value: 0,
 			},
 			&cli.BoolFlag{
 				Name:  "save-full",
-				Usage: "Save the entire file with a match, not just the matching lines (use --save-full-folder to specify folder)",
+				Usage: "On first match, save the whole file (not only the matching line)",
 			},
 			&cli.StringFlag{
 				Name:  "save-full-folder",
-				Usage: "Folder to save found files (default: /found_files)",
+				Usage: "Destination folder for saved matched files (required with --save-full)",
 				Value: "/found_files",
 			},
 			&cli.BoolFlag{
 				Name:  "archives",
-				Usage: "Process archives (zip, tar, gz, bz2, xz, rar)",
+				Usage: "Also scan archives (.zip,.tar,.gz,.bz2,.xz,.rar,.7z,...)",
 			},
 			&cli.IntFlag{
 				Name:  "depth",
-				Usage: "Search depth (0 - unlimited)",
+				Usage: "Max directory depth (0 - unlimited)",
 				Value: 0,
 			},
 			&cli.DurationFlag{
 				Name:  "timeout",
-				Usage: "Timeout for the scan (e.g. 10m, 1h)",
+				Usage: "Global timeout for scan (e.g. 10m, 1h)",
 			},
 			&cli.BoolFlag{
 				Name:  "fail-fast",
-				Usage: "Stop on first error (fail-fast mode)",
+				Usage: "Stop immediately on any error",
 			},
 			&cli.StringFlag{
 				Name:  "save-matches-file",
-				Usage: "Path to the file where all found lines will be saved (one file)",
+				Usage: "Append all matched lines into a single file",
 			},
 			&cli.StringFlag{
 				Name:  "save-matches-folder",
-				Usage: "A folder where a separate file with the lines found for each pattern will be created",
+				Usage: "Create per-pattern files with matched lines inside this folder",
+			},
+			&cli.StringFlag{
+				Name:  "log-level",
+				Usage: "Log level: debug, info, warn, error",
+				Value: "info",
 			},
 		},
 		Action: func(c *cli.Context) error {
-			start := time.Now()
-			InitLogger(c.String("logfile"))
+			internal.InitLogger(c.String("logfile"), c.String("log-level"))
 			logrus.Info("FileFinder started")
 
-			// Setup context with cancel and signal handling
-			timeout := c.Duration("timeout")
-			ctx := context.Background()
+			// ctx with timeout + OS signals
+			base := context.Background()
+
 			var cancel context.CancelFunc
-			if timeout > 0 {
-				ctx, cancel = context.WithTimeout(ctx, timeout)
+			if t := c.Duration("timeout"); t > 0 {
+				base, cancel = context.WithTimeout(base, t)
 			} else {
-				ctx, cancel = context.WithCancel(ctx)
+				base, cancel = context.WithCancel(base)
 			}
-			sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-			defer stop()
 			defer cancel()
 
+			ctx, stop := signal.NotifyContext(base, syscall.SIGINT, syscall.SIGTERM)
+			defer stop()
+
+			// roots
 			roots := c.Args().Slice()
 			var validRoots []string
 			if len(roots) == 0 {
-				// Autodetect roots for each OS
-				validRoots = detectRoots()
-				logrus.Infof("No search paths provided, using all available roots: %v", validRoots)
+				validRoots = internal.DetectRoots(runtime.GOOS)
+				logrus.Infof("No search paths provided, using auto roots: %v", validRoots)
 			} else {
 				for _, r := range roots {
-					if _, err := os.Stat(r); err == nil {
+					if st, err := os.Stat(r); err == nil && st.IsDir() {
 						validRoots = append(validRoots, r)
 					} else {
-						logrus.Warnf("Path does not exist or is not accessible: %s", r)
+						logrus.Warnf("Skip: not a dir or inaccessible: %s", r)
 					}
 				}
 				if len(validRoots) == 0 {
-					logrus.Error("No valid search paths provided. Exiting.")
-					return nil
+					return cli.Exit("No valid search paths", 1)
 				}
 			}
 
-			// Bring extensions to unified format (.ext)
-			whitelist := normalizeExtSlice(c.StringSlice("whitelist"))
-			blacklist := normalizeExtSlice(c.StringSlice("blacklist"))
+			// normalize ext slices to ".ext"
+			norm := func(s []string) []string {
+				out := make([]string, 0, len(s))
+				for _, ext := range s {
+					for _, v := range strings.Split(ext, ",") {
+						v = strings.TrimSpace(v)
+						if v == "" {
+							continue
+						}
+						v = strings.TrimPrefix(v, ".")
+						out = append(out, "."+strings.ToLower(v))
+					}
+				}
+				return out
+			}
+
+			wh := norm(c.StringSlice("whitelist"))
+			bl := norm(c.StringSlice("blacklist"))
 
 			opts := internal.ScanOptions{
 				Roots:                      validRoots,
-				Whitelist:                  whitelist,
-				Blacklist:                  blacklist,
+				PatternFile:                c.String("pattern-file"),
 				Depth:                      c.Int("depth"),
 				Archives:                   c.Bool("archives"),
-				PatternFile:                c.String("pattern-file"),
+				Whitelist:                  wh,
+				Blacklist:                  bl,
 				Threads:                    c.Int("threads"),
 				SaveFull:                   c.Bool("save-full"),
 				SaveFullFolder:             c.String("save-full-folder"),
@@ -152,75 +151,26 @@ func main() {
 				SaveMatchesFile:            c.String("save-matches-file"),
 				SaveMatchesByPatternFolder: c.String("save-matches-folder"),
 			}
+			if err := opts.Validate(); err != nil {
+				return cli.Exit(err.Error(), 1)
+			}
+			opts.Prepare() // build fast lookup maps, set thread defaults
 
+			var stats internal.AppStats
 			finder := internal.NewFileScanner()
-			var (
-				matchCount     int64
-				errorCount     int64
-				fileCount      int64
-				matchesFileMu  sync.Mutex
-				patternFilesMu sync.Map
-			)
-			err := finder.Scan(sigCtx, opts, func(res internal.MatchResult) {
-				if res.Error != nil {
-					errorCount++
-					logrus.WithFields(logrus.Fields{"file": res.FilePath, "err": res.Error}).Error("Error while processing file")
-					if opts.FailFast {
-						cancel()
-					}
-					return
+
+			if err := finder.Scan(ctx, opts, internal.NewResultSink(opts, &stats)); err != nil {
+				if ctx.Err() != nil {
+					logrus.Warn("Scan cancelled")
+				} else {
+					logrus.WithError(err).Error("Scan failed")
 				}
-				if res.Matched {
-					matchCount++
-					logrus.WithFields(logrus.Fields{"file": res.FilePath, "line": res.LineNumber}).Info("Match found")
-					// Save the found line to a common file if specified
-					if opts.SaveMatchesFile != "" && res.Line != "" {
-						matchesFileMu.Lock()
-						f, err := os.OpenFile(opts.SaveMatchesFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-						if err == nil {
-							f.WriteString(res.Line)
-							f.Close()
-						}
-						matchesFileMu.Unlock()
-					}
-					// We save the found line according to the pattern, if specified
-					if opts.SaveMatchesByPatternFolder != "" && res.Line != "" && res.Pattern != "" {
-						// The file name is a safe representation of the pattern.
-						patFileName := strings.ReplaceAll(res.Pattern, string(os.PathSeparator), "_")
-						patFileName = strings.ReplaceAll(patFileName, ":", "_")
-						patFileName = strings.ReplaceAll(patFileName, "*", "_")
-						patFileName = strings.ReplaceAll(patFileName, "?", "_")
-						patFileName = strings.ReplaceAll(patFileName, "\"", "_")
-						patFileName = strings.ReplaceAll(patFileName, "<", "_")
-						patFileName = strings.ReplaceAll(patFileName, ">", "_")
-						patFileName = strings.ReplaceAll(patFileName, "|", "_")
-						patFilePath := opts.SaveMatchesByPatternFolder + string(os.PathSeparator) + patFileName + ".txt"
-						// mutex for each file
-						muAny, _ := patternFilesMu.LoadOrStore(patFilePath, &sync.Mutex{})
-						mu := muAny.(*sync.Mutex)
-						mu.Lock()
-						f, err := os.OpenFile(patFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-						if err == nil {
-							f.WriteString(res.Line)
-							f.Close()
-						}
-						mu.Unlock()
-					}
-				}
-				if res.FilePath != "" && !res.Matched {
-					fileCount++
-				}
-			})
-			if err != nil {
-				logrus.WithError(err).Fatal("Scan failed")
 			}
 
-			// Total info
-			fmt.Printf("\n======= Scan finished in %s =======\n", time.Since(start))
-			fmt.Printf("Total files scanned: %d\n", fileCount)
-			fmt.Printf("Total matches found: %d\n", matchCount)
-			fmt.Printf("Errors: %d\n", errorCount)
-
+			fmt.Printf(
+				"\n======= Scan finished in %s =======\nTotal files scanned: %d\nTotal matches found: %d\nErrors: %d\n",
+				stats.Elapsed(), stats.FilesProcessed.Load(), stats.Matches.Load(), stats.Errors.Load(),
+			)
 			return nil
 		},
 	}
@@ -228,54 +178,4 @@ func main() {
 	if err := app.Run(os.Args); err != nil {
 		logrus.Fatal(err)
 	}
-}
-
-// normalizeExtSlice normalizes file extension slices to ".ext" format.
-func normalizeExtSlice(s []string) []string {
-	out := make([]string, 0, len(s))
-	for _, ext := range s {
-		for _, val := range strings.Split(ext, ",") {
-			val = strings.TrimSpace(val)
-			if val == "" {
-				continue
-			}
-			val = strings.TrimPrefix(val, ".")
-			val = "." + strings.ToLower(val)
-			out = append(out, val)
-		}
-	}
-	return out
-}
-
-// detectRoots detects all root directories depending on the OS.
-func detectRoots() []string {
-	osType := runtime.GOOS
-	if osType == "windows" {
-		var drives []string
-		for c := 'C'; c <= 'Z'; c++ {
-			path := string(c) + ":\\"
-			if _, err := os.Stat(path); err == nil {
-				drives = append(drives, path)
-			}
-		}
-		return drives
-	}
-
-	// On Linux/macOS: search root is /
-	roots := []string{"/"}
-	// Check default mount points
-	folders := []string{"/mnt", "/media", "/run/media", "/Volumes"} // Last — for macOS
-
-	for _, mount := range folders {
-		if info, err := os.Stat(mount); err == nil && info.IsDir() {
-			entries, err := os.ReadDir(mount)
-			if err == nil {
-				for _, entry := range entries {
-					// Add all found folder
-					roots = append(roots, mount+"/"+entry.Name())
-				}
-			}
-		}
-	}
-	return roots
 }
