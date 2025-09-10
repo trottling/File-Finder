@@ -117,9 +117,16 @@ func matchReader(
 }
 
 func finalSavePath(folder, filePath, innerPath string) string {
-	base := strings.ReplaceAll(filePath, string(os.PathSeparator), "_")
-	if innerPath != "" {
-		return filepath.Join(folder, base, strings.ReplaceAll(innerPath, string(os.PathSeparator), "_"))
+	sanitize := func(p string) string {
+		p = strings.TrimPrefix(strings.TrimPrefix(p, "/"), "\\")
+		p = strings.ReplaceAll(p, "\\", "_")
+		p = strings.ReplaceAll(p, "/", "_")
+		return p
 	}
-	return filepath.Join(folder, base)
+	base := sanitize(filePath)
+	if innerPath != "" {
+		inner := sanitize(innerPath)
+		return filepath.ToSlash(filepath.Join(folder, base, inner))
+	}
+	return filepath.ToSlash(filepath.Join(folder, base))
 }
