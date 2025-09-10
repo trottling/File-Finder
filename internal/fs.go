@@ -117,7 +117,8 @@ func depthCount(rel string) int {
 
 func Sanitize(s string) string {
 	r := strings.NewReplacer(
-		string(os.PathSeparator), "_", ":", "_", "*", "_", "?", "_",
+		"/", "_", "\\", "_",
+		":", "_", "*", "_", "?", "_",
 		"\"", "_", "<", "_", ">", "_", "|", "_",
 	)
 	return r.Replace(s)

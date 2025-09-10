@@ -57,6 +57,7 @@ func matchReader(
 		if len(b) > 0 {
 			line := string(b)
 			// Lowercase once per line if we have insensitive patterns
+
 			var lineForCheck string
 			if hasInsensitive {
 				lowerBuf.Reset()
@@ -65,26 +66,36 @@ func matchReader(
 			} else {
 				lineForCheck = line
 			}
+
 			for _, p := range patterns {
+
 				if p.Match(lineForCheck) {
 					matchedPattern = p.Desc()
 					found = true
+
 					if saveFull {
 						// flush temp and move it
 						if tmpFile != nil {
+
 							tmpFile.Sync()
 							tmpPath = finalSavePath(saveFullFolder, filePath, innerPath)
+
+							// ensure parent dir exists: <saveFullFolder>/<base>/
+							if err := os.MkdirAll(filepath.Dir(tmpPath), 0755); err != nil {
+								errorCount.Add(1)
+								onMatch(MatchResult{FilePath: filePath, InnerPath: innerPath, Error: err})
+								return
+							}
+
 							_ = tmpFile.Close()
-							// rename (atomic on same fs)
-							_ = os.Rename(tmpFile.Name(), tmpPath)
+							// atomic rename
+							if err := os.Rename(tmpFile.Name(), tmpPath); err != nil {
+								errorCount.Add(1)
+								onMatch(MatchResult{FilePath: filePath, InnerPath: innerPath, Error: err})
+								return
+							}
 						}
-						onMatch(MatchResult{FilePath: filePath, InnerPath: innerPath, FullFile: nil, Matched: true, Pattern: matchedPattern})
-					} else {
-						// ensure newline
-						if !strings.HasSuffix(line, "\n") {
-							line += "\n"
-						}
-						onMatch(MatchResult{FilePath: filePath, InnerPath: innerPath, LineNumber: lineNum, Line: line, Matched: true, Pattern: matchedPattern})
+						onMatch(MatchResult{FilePath: filePath, InnerPath: innerPath, Matched: true, Pattern: matchedPattern})
 					}
 					matchCount.Add(1)
 					// do not break reading: we still need to drain if tee is active for archives;
@@ -118,8 +129,15 @@ func matchReader(
 
 func finalSavePath(folder, filePath, innerPath string) string {
 	base := strings.ReplaceAll(filePath, string(os.PathSeparator), "_")
+	base = strings.ReplaceAll(base, "/", "_")
+	base = strings.ReplaceAll(base, "\\", "_")
+	base = strings.ReplaceAll(base, ":", "_")
+
 	if innerPath != "" {
-		return filepath.Join(folder, base, strings.ReplaceAll(innerPath, string(os.PathSeparator), "_"))
+		inner := strings.ReplaceAll(innerPath, string(os.PathSeparator), "_")
+		inner = strings.ReplaceAll(inner, "/", "_")
+		inner = strings.ReplaceAll(inner, "\\", "_")
+		return filepath.Join(folder, base, inner)
 	}
 	return filepath.Join(folder, base)
 }
